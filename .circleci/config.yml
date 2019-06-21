@@ -1,0 +1,222 @@
+defaults: &defaults
+  docker:
+    - image: gcr.io/${GCLOUD_ACTIVO_PROJECT}/activo-web-ci-image:latest
+      auth:
+        username: _json_key
+        password: '${SERVICE_ACCOUNT}'
+  working_directory: ~/activo-web
+# setup environment for k8s GCP authentication and cluster connection
+# currently there are three cluster environments on GCP 
+# Staging, Production, and Quality Assurance(QA) environments
+cmd_set_up_k8s_cluster_staging: &cmd_set_up_k8s_cluster_staging
+  run:
+    name: Setup staging environment for kubernetes deployment & authentication
+    command: |
+      ls
+      touch account.json
+      echo $SERVICE_ACCOUNT_ENCODED | base64 -d > account.json
+      gcloud config set project ${GCLOUD_PROJECT}
+      gcloud auth activate-service-account --key-file=./account.json
+      gcloud container clusters get-credentials ${K8S_CLUSTER_STAGING} --zone="europe-west1-b"  --project ${GCLOUD_PROJECT}
+
+
+# The cirleci Jobs Tree
+version: 2
+jobs:
+  build:
+    <<: *defaults
+    steps:
+    - run:
+        name: Just an init stage
+        command: |
+            echo "current version"
+            echo $CURRENT_VERSION
+
+  create_cluster_infrastructure:
+    docker: 
+      - image: gcr.io/${GCLOUD_ACTIVO_PROJECT}/activo-api-ci-ansible
+        auth:
+          username: _json_key
+          password: '${SERVICE_ACCOUNT}'
+
+    steps:
+    - checkout
+    # - *cmd_set_up_k8s_cluster_staging
+    - attach_workspace:
+        at: ~/activo-web
+    
+    - run:
+        name: install terraform
+        command: |
+          sudo apt-get update && apt-get upgrade -y
+          sudo apt-get install wget unzip
+
+          wget https://releases.hashicorp.com/terraform/0.11.13/terraform_0.11.13_linux_amd64.zip
+          sudo unzip ./terraform_0.11.13_linux_amd64.zip -d /usr/local/bin/
+    
+    - run:
+        name: create the cluster
+        command: |
+          touch account.json
+
+          mkdir -p /blue_green/blue-green-cluster/gke/secrets
+          echo $SERVICE_ACCOUNT_ENCODED | base64 -d > account.json
+
+          gcloud config set project ${GCLOUD_PROJECT}
+          gcloud auth activate-service-account --key-file=./account.json
+
+          # echo $SERVICE_ACCOUNT_ENCODED | base64 -d > /blue_green/blue-green-cluster/gke/secrets/account.json
+          cp account.json /blue_green/blue-green-cluster/gke/secrets/account.json
+
+          cat /blue_green/blue-green-cluster/gke/secrets/account.json
+          ansible-playbook blue_green/blue-green-cluster/create_playbook.yml -vvv
+
+# Section for Deployment to different enviromnent and also Heroku
+  # Steps to orchestrate deployment on Staging.
+  deploy_staging:
+    #  docker environment for running k8s deployment
+    docker:
+      - image: gcr.io/${GCLOUD_ACTIVO_PROJECT}/activo-api-ci-ansible
+        auth:
+          username: _json_key
+          password: '${SERVICE_ACCOUNT}'
+    steps:
+      - checkout
+      - *cmd_set_up_k8s_cluster_staging
+      - attach_workspace:
+          at: ~/activo-web
+      - run:
+          name: install envsubst
+          command: sudo apt-get install -y gettext
+
+      - run:
+          name: Create K8s Objects
+          command: |
+
+              echo "current version"
+
+              # BLUE_VERSION=$(head -n 1 blue.txt)
+              # GREEN_VERSION=$(head -n 1 green.txt)
+              # gsutil cp output.txt gc://blue_green
+
+              gsutil cp gs://blue_green/output.txt output.txt
+
+              gsutil cp -r gs://blue_green/output.txt .
+
+              VERSION=$(head -n 1 output.txt)
+              echo $VERSION
+              export CURRENT_VERSION=$VERSION
+    
+              if [[ $VERSION == "blue" ]]; then
+                  echo "green" > output.txt
+                  gsutil cp output.txt gs://blue_green/output.txt 
+                  # export CURRENT_VERSION=$(head -n 1 green.txt)
+                  # VERSION="green"
+              fi
+
+              if [[ $VERSION == "green" ]]; then
+                  echo "blue" > output.txt
+                  gsutil cp output.txt gs://blue_green/output.txt 
+                  # export CURRENT_VERSION=$(head -n 1 blue.txt)
+                  # VERSION="blue"
+              fi
+
+              # Load env vars
+
+              # Environment subst
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/web-deployment.yml.tpl > blue_green/deployment_scripts/web-deployment.yml
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/shared-ingress-service.yml.tpl > blue_green/deployment_scripts/shared-ingress-service.yml
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/service.yml.tpl > blue_green/deployment_scripts/service.yml
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/nginx-service.yml.tpl > blue_green/deployment_scripts/nginx-service.yml
+
+              echo "Generated files"
+
+              ls blue_green/deployment_scripts
+
+              cat blue_green/deployment_scripts/web-deployment.yml
+
+              ansible-playbook blue_green/blue_deploy_playbook.yml -vvv
+
+
+  roll_back_deployment:
+    #  docker environment for running k8s deployment
+    docker:
+      - image: gcr.io/${GCLOUD_ACTIVO_PROJECT}/activo-api-ci-ansible
+        auth:
+          username: _json_key
+          password: '${SERVICE_ACCOUNT}'
+    steps:
+      - checkout
+      - *cmd_set_up_k8s_cluster_staging
+      - attach_workspace:
+          at: activo-web/output.txt
+      - run:
+          name: install envsubst
+          command: sudo apt-get install -y gettext
+      - run:
+          name: Create K8s Objects
+          command: |
+
+              echo "current version"
+
+              gsutil cp gs://blue_green/output.txt output.txt  
+
+              VERSION=$(head -n 1 output.txt)
+              echo $VERSION
+              export CURRENT_VERSION=$VERSION
+    
+              if [[ $VERSION == "blue" ]]; then
+                  echo "green" > output.txt
+                  gsutil cp output.txt gs://blue_green/output.txt 
+                  # export CURRENT_VERSION=$(head -n 1 green.txt)
+                  # VERSION="green"
+              fi
+
+              if [[ $VERSION == "green" ]]; then
+                  echo "blue" > output.txt
+                  gsutil cp output.txt gs://blue_green/output.txt 
+                  # export CURRENT_VERSION=$(head -n 1 blue.txt)
+                  # VERSION="blue"
+              fi
+
+              # Load env vars
+
+              #  Environment subst
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/web-deployment.yml.tpl > blue_green/deployment_scripts/web-deployment.yml
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/shared-ingress-service.yml.tpl > blue_green/deployment_scripts/shared-ingress-service.yml
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/service.yml.tpl > blue_green/deployment_scripts/service.yml
+              envsubst < ./blue_green/deployment_scripts/deploy_templates/nginx-service.yml.tpl > blue_green/deployment_scripts/nginx-service.yml
+
+              echo "Generated files"
+
+              ls blue_green/deployment_scripts
+
+              cat blue_green/deployment_scripts/web-deployment.yml
+
+              ansible-playbook blue_green/blue_deploy_playbook.yml -vvv
+
+
+# The Workflow tree
+workflows:
+  version: 2
+  blue_green_deployment:
+    jobs:
+      - create_cluster_infrastructure
+
+      - build:
+          requires:
+            - create_cluster_infrastructure
+
+      - deploy_staging:
+          type: approval
+          requires:
+            - build
+
+      - roll_back_approval:
+          type: approval
+          requires:
+            - build
+        
+      - roll_back_deployment:
+          requires:
+            - roll_back_approval

@@ -1,0 +1,33 @@
+# Local environment file
+.env
+
+#vscode config
+.vscode
+
+#DStore
+.DS_Store
+
+# Escape the locally generated deployment files
+blue_green/deployment_scripts/**.yml
+
+blue_green/deployment_scripts/.vscode/
+
+blue_green_switch.sh
+
+blue.txt
+
+green.txt
+
+output.txt
+
+# terraform files
+/blue_green/blue-green-cluster/.terraform/
+
+/blue_green/blue-green-cluster/terraform.tfstate.d/
+
+/blue_green/blue-green-cluster/terraform.tfstate
+
+/blue_green/blue-green-cluster/terraform.tfstate.backup
+
+/blue_green/blue-green-cluster/gke/secrets/account.json
+

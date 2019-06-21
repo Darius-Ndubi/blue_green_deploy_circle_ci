@@ -1,0 +1,32 @@
+---
+- name: main
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: terraform initialization
+      shell:
+        cmd: |
+          terraform init 
+    
+    - name: terraform plan
+      terraform:
+        project_path: '/'
+        force_init: true
+        plan_file: "{{playbook_dir}}/tfplan"
+        lock: true
+        state: planned
+
+    # - name: backend config
+    #   backend_config:
+    #     region: europe-west2
+    #     bucket: "state_store"
+    #     key: "random.tfstate"
+
+    - name: terraform apply
+      terraform:
+        project_path: '/'
+        lock: true
+        state: present
+

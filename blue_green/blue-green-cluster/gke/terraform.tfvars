@@ -1,0 +1,5 @@
+project = "fastfoodfast-221906"
+environment = "staging"
+product = "bg"
+owner = "darius"
+maintainer = "yagami"

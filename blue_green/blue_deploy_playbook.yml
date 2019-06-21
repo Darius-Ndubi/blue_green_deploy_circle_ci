@@ -1,0 +1,47 @@
+---
+- name: main
+  hosts: localhost
+  gather_facts: true
+  become: sudo
+  connection: local
+
+  tasks:
+  - name: Install Open-shift 
+    pip:
+      name: openshift
+
+  # - name: Authenticate to the cluster
+  #   shell:
+  #     cmd: |
+  #       gcloud auth activate-service-account --key-file=./blue-cluster/blue-cluster-terraform/gke/secrets/account.json
+  
+  # - name: Create namespace
+  #   shell:
+  #     cmd: |
+  #       kubectl create namespace staging
+
+  - name: Create nginx controller
+    shell:
+      cmd: |
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/static/mandatory.yaml
+
+  - name: create nginx service
+    k8s:
+      state: present
+      src: deployment_scripts/nginx-service.yml
+  
+  - name: deploy the application
+    k8s:
+      state: present
+      src: deployment_scripts/web-deployment.yml
+  
+  - name: create the service
+    k8s:
+      state: present
+      src: deployment_scripts/service.yml
+
+  - name: create the shared ingress service 
+    k8s:
+      state: present
+      src: deployment_scripts/shared-ingress-service.yml
+
